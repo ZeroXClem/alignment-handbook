@@ -1,5 +1,4 @@
 # coding=utf-8
-# coding=utf-8
 # Copyright 2023 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,11 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import os
 import re
 from typing import List, Literal, Optional
 
-from datasets import DatasetDict, concatenate_datasets, load_dataset
+from datasets import DatasetDict, concatenate_datasets, load_dataset, load_from_disk
+from datasets.builder import DatasetGenerationError
 
 from .configs import DataArguments
 
@@ -72,12 +72,15 @@ def apply_chat_template(
             example["text_prompt"] = tokenizer.apply_chat_template(
                 prompt_messages, tokenize=False, add_generation_prompt=True
             )
-
-        example["text_chosen"] = _strip_prefix(example["text_chosen"], assistant_prefix)
-        example["text_rejected"] = _strip_prefix(example["text_rejected"], assistant_prefix)
+            example["text_chosen"] = _strip_prefix(example["text_chosen"], assistant_prefix)
+            example["text_rejected"] = _strip_prefix(example["text_rejected"], assistant_prefix)
+        else:
+            raise ValueError(
+                f"Could not format example as dialogue for `dpo` task! Require `[chosen, rejected]` keys but found {list(example.keys())}"
+            )
     else:
         raise ValueError(
-            f"Could not format example as dialogue for `dpo` task! Require `[chosen, rejected]` keys but found {list(example.keys())}"
+            f"Task {task} not supported, please ensure that the provided task is one of {['sft', 'generation', 'rm', 'dpo']}"
         )
     return example
 
@@ -143,20 +146,17 @@ def mix_datasets(dataset_mixer: dict, splits: Optional[List[str]] = None, shuffl
     for ds, frac in dataset_mixer.items():
         fracs.append(frac)
         for split in splits:
+            try:
+                # Try first if dataset on a Hub repo
+                dataset = load_dataset(ds, split=split)
+            except DatasetGenerationError:
+                # If not, check local dataset
+                dataset = load_from_disk(os.path.join(ds, split))
+
             if "train" in split:
-                raw_train_datasets.append(
-                    load_dataset(
-                        ds,
-                        split=split,
-                    )
-                )
+                raw_train_datasets.append(dataset)
             elif "test" in split:
-                raw_val_datasets.append(
-                    load_dataset(
-                        ds,
-                        split=split,
-                    )
-                )
+                raw_val_datasets.append(dataset)
             else:
                 raise ValueError(f"Split type {split} not recognized as one of test or train.")
 
